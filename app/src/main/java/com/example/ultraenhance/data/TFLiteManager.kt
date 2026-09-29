@@ -12,6 +12,16 @@ import java.nio.channels.FileChannel
 
 class TFLiteManager(private val context: Context) {
 
+    fun isModelAvailable(modelName: String): Boolean {
+        return try {
+            val fileDescriptor = context.assets.openFd(modelName)
+            fileDescriptor.close()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     fun loadModelFile(modelName: String): MappedByteBuffer {
         return try {
             val fileDescriptor: AssetFileDescriptor = context.assets.openFd(modelName)
@@ -44,7 +54,6 @@ class TFLiteManager(private val context: Context) {
         return try {
             Interpreter(modelBuffer, options)
         } catch (e: Exception) {
-            // Fallback to 4 CPU threads if GPU interpreter creation fails
             gpuDelegate?.close()
             val fallbackOptions = Interpreter.Options().apply {
                 setNumThreads(4)

@@ -2,6 +2,9 @@ package com.example.ultraenhance.ui.viewmodel
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ultraenhance.data.SuperResProcessor
@@ -15,7 +18,7 @@ import kotlinx.coroutines.launch
 sealed class UiState {
     object Idle : UiState()
     object Processing : UiState()
-    data class Success(val original: Bitmap, val enhanced: Bitmap) : UiState()
+    data class Success(val original: Bitmap, val enhanced: Bitmap, val isFallback: Boolean = false) : UiState()
     data class Error(val message: String) : UiState()
 }
 
@@ -29,16 +32,31 @@ class MainViewModel : ViewModel() {
             _uiState.value = UiState.Processing
             try {
                 val zeroDCEProcessor = ZeroDCEProcessor(context)
+                val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
                 val stage1Output = zeroDCEProcessor.process(inputBitmap)
                 zeroDCEProcessor.close()
 
                 val superResProcessor = SuperResProcessor(context)
+                val isSuperResAvailable = superResProcessor.isModelAvailable()
                 val stage2Output = superResProcessor.process(stage1Output)
                 superResProcessor.close()
 
+                val isFallbackUsed = !isZeroDCEAvailable || !isSuperResAvailable
+
+                if (isFallbackUsed) {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(
+                            context.applicationContext,
+                            "Running in Native Fallback mode. Add .tflite models to assets for AI mode.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+
                 _uiState.value = UiState.Success(
                     original = inputBitmap,
-                    enhanced = stage2Output
+                    enhanced = stage2Output,
+                    isFallback = isFallbackUsed
                 )
             } catch (e: Exception) {
                 _uiState.value = UiState.Error(
