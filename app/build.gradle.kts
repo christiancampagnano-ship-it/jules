@@ -47,8 +47,8 @@ android {
         kotlinCompilerExtensionVersion = "1.5.8"
     }
 
-    aaptOptions {
-        noCompress("tflite")
+    androidResources {
+        noCompress += "tflite"
     }
 
     packaging {
