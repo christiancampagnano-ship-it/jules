@@ -6,39 +6,65 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtSession
 import org.tensorflow.lite.Interpreter
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.FloatBuffer
 
 class SuperResProcessor(private val context: Context) {
 
     private val tfLiteManager = TFLiteManager(context)
+    private val onnxManager = ONNXManager(context)
+
     private var interpreter: Interpreter? = null
+    private var ortSession: OrtSession? = null
 
     companion object {
-        const val MODEL_FILE = "fast_srgan.tflite"
+        const val TFLITE_MODEL_FILE = "real_esrgan_compact_4x.tflite"
+        const val ONNX_MODEL_FILE = "real_esrgan_compact_4x.onnx"
+        const val FAST_SRGAN_MODEL_FILE = "fast_srgan.tflite"
+
         const val SCALE_FACTOR = 4
         const val TILE_SIZE = 512
         const val OVERLAP = 16
     }
 
     fun isModelAvailable(): Boolean {
-        return tfLiteManager.isModelAvailable(MODEL_FILE)
+        return onnxManager.isModelAvailable(ONNX_MODEL_FILE) ||
+                tfLiteManager.isModelAvailable(TFLITE_MODEL_FILE) ||
+                tfLiteManager.isModelAvailable(FAST_SRGAN_MODEL_FILE)
     }
 
     private fun getInterpreter(): Interpreter? {
-        if (interpreter == null && isModelAvailable()) {
-            val buffer = tfLiteManager.loadModelFile(MODEL_FILE)
+        if (interpreter == null && tfLiteManager.isModelAvailable(TFLITE_MODEL_FILE)) {
+            val buffer = tfLiteManager.loadModelFile(TFLITE_MODEL_FILE)
+            interpreter = tfLiteManager.createInterpreter(buffer)
+        } else if (interpreter == null && tfLiteManager.isModelAvailable(FAST_SRGAN_MODEL_FILE)) {
+            val buffer = tfLiteManager.loadModelFile(FAST_SRGAN_MODEL_FILE)
             interpreter = tfLiteManager.createInterpreter(buffer)
         }
         return interpreter
+    }
+
+    private fun getOrtSession(): OrtSession? {
+        if (ortSession == null && onnxManager.isModelAvailable(ONNX_MODEL_FILE)) {
+            ortSession = onnxManager.createSession(ONNX_MODEL_FILE)
+        }
+        return ortSession
     }
 
     fun process(
         inputBitmap: Bitmap,
         onProgress: ((currentTile: Int, totalTiles: Int) -> Unit)? = null
     ): Bitmap {
-        val interp = getInterpreter() ?: return applyNativeFallback(inputBitmap)
+        val session = getOrtSession()
+        val interp = if (session == null) getInterpreter() else null
+
+        if (session == null && interp == null) {
+            return applyNativeFallback(inputBitmap)
+        }
 
         return try {
             val inWidth = inputBitmap.width
@@ -55,7 +81,6 @@ class SuperResProcessor(private val context: Context) {
                 isFilterBitmap = true
             }
 
-            // Calculate grid tiles with 16px overlap
             val step = TILE_SIZE - (OVERLAP * 2)
 
             val xTiles = Math.ceil(inWidth.toDouble() / step).toInt()
@@ -81,10 +106,13 @@ class SuperResProcessor(private val context: Context) {
                     if (tileW <= 0 || tileH <= 0) continue
 
                     val tileBitmap = Bitmap.createBitmap(inputBitmap, startX, startY, tileW, tileH)
-                    val processedTile = processTile(interp, tileBitmap)
+                    val processedTile = if (session != null) {
+                        processTileONNX(session, tileBitmap)
+                    } else {
+                        processTileTFLite(interp!!, tileBitmap)
+                    }
                     tileBitmap.recycle()
 
-                    // Crop out the overlap regions from the processed tile output to eliminate seam lines
                     val cropLeft = if (startX > 0) OVERLAP * SCALE_FACTOR else 0
                     val cropTop = if (startY > 0) OVERLAP * SCALE_FACTOR else 0
                     val cropRight = if (endX < inWidth) OVERLAP * SCALE_FACTOR else 0
@@ -117,13 +145,67 @@ class SuperResProcessor(private val context: Context) {
                 }
             }
 
-            applyUnsharpMask(outputBitmap)
+            applyHighFrequencySharpening(outputBitmap)
         } catch (e: Exception) {
             applyNativeFallback(inputBitmap)
         }
     }
 
-    private fun processTile(interp: Interpreter, tileBitmap: Bitmap): Bitmap {
+    private fun processTileONNX(session: OrtSession, tileBitmap: Bitmap): Bitmap {
+        val tileW = tileBitmap.width
+        val tileH = tileBitmap.height
+        val outTileW = tileW * SCALE_FACTOR
+        val outTileH = tileH * SCALE_FACTOR
+
+        val floatBuffer = FloatBuffer.allocate(1 * 3 * tileH * tileW)
+        val intValues = IntArray(tileW * tileH)
+        tileBitmap.getPixels(intValues, 0, tileW, 0, 0, tileW, tileH)
+
+        // CHW format for Real-ESRGAN ONNX model input [1, 3, H, W]
+        for (channel in 0 until 3) {
+            for (i in 0 until tileH * tileW) {
+                val pixel = intValues[i]
+                val colorComponent = when (channel) {
+                    0 -> (pixel shr 16) and 0xFF
+                    1 -> (pixel shr 8) and 0xFF
+                    else -> pixel and 0xFF
+                }
+                floatBuffer.put(colorComponent / 255.0f)
+            }
+        }
+        floatBuffer.rewind()
+
+        val env = onnxManager.getOrtEnvironment()
+        val inputShape = longArrayOf(1, 3, tileH.toLong(), tileW.toLong())
+        val inputTensor = OnnxTensor.createTensor(env, floatBuffer, inputShape)
+
+        val inputName = session.inputNames.iterator().next()
+        val results = session.run(mapOf(inputName to inputTensor))
+
+        @Suppress("UNCHECKED_CAST")
+        val outputTensor = results[0] as OnnxTensor
+        val outputArray = outputTensor.floatBuffer
+
+        val tileResult = Bitmap.createBitmap(outTileW, outTileH, Bitmap.Config.ARGB_8888)
+        val outPixels = IntArray(outTileW * outTileH)
+
+        val channelStride = outTileH * outTileW
+        for (i in 0 until channelStride) {
+            val r = (outputArray.get(i).coerceIn(0.0f, 1.0f) * 255.0f).toInt()
+            val g = (outputArray.get(channelStride + i).coerceIn(0.0f, 1.0f) * 255.0f).toInt()
+            val b = (outputArray.get(2 * channelStride + i).coerceIn(0.0f, 1.0f) * 255.0f).toInt()
+
+            outPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+
+        tileResult.setPixels(outPixels, 0, outTileW, 0, 0, outTileW, outTileH)
+        results.close()
+        inputTensor.close()
+
+        return tileResult
+    }
+
+    private fun processTileTFLite(interp: Interpreter, tileBitmap: Bitmap): Bitmap {
         val tileW = tileBitmap.width
         val tileH = tileBitmap.height
 
@@ -184,7 +266,7 @@ class SuperResProcessor(private val context: Context) {
         return tileResult
     }
 
-    private fun applyUnsharpMask(bitmap: Bitmap): Bitmap {
+    private fun applyHighFrequencySharpening(bitmap: Bitmap): Bitmap {
         val width = bitmap.width
         val height = bitmap.height
 
@@ -193,6 +275,7 @@ class SuperResProcessor(private val context: Context) {
 
         val resultPixels = pixels.clone()
 
+        // High-frequency detail sharpening kernel
         for (y in 1 until height - 1) {
             for (x in 1 until width - 1) {
                 val idx = y * width + x
@@ -244,11 +327,16 @@ class SuperResProcessor(private val context: Context) {
         val destRect = RectF(0f, 0f, outWidth.toFloat(), outHeight.toFloat())
         canvas.drawBitmap(inputBitmap, null, destRect, paint)
 
-        return applyUnsharpMask(scaledBitmap)
+        return applyHighFrequencySharpening(scaledBitmap)
     }
 
     fun close() {
         interpreter?.close()
         interpreter = null
+        try {
+            ortSession?.close()
+            ortSession = null
+        } catch (_: Exception) {}
+        onnxManager.close()
     }
 }

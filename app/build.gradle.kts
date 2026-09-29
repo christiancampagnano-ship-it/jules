@@ -48,7 +48,7 @@ android {
     }
 
     androidResources {
-        noCompress += "tflite"
+        noCompress += listOf("tflite", "onnx")
     }
 
     packaging {
@@ -77,6 +77,9 @@ dependencies {
     implementation(libs.tensorflow.lite.gpu)
     implementation(libs.tensorflow.lite.gpu.api)
     implementation(libs.tensorflow.lite.support)
+
+    // ONNX Runtime
+    implementation(libs.onnxruntime.android)
 
     // Coil
     implementation(libs.coil.compose)
