@@ -82,6 +82,7 @@ class SuperResProcessor(private val context: Context) {
                     inputBuffer.putFloat(b)
                 }
             }
+            inputBuffer.rewind()
 
             val outputBuffer = ByteBuffer.allocateDirect(1 * outHeight * outWidth * 3 * 4)
             outputBuffer.order(ByteOrder.nativeOrder())

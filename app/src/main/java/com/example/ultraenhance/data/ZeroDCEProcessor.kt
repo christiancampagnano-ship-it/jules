@@ -69,6 +69,7 @@ class ZeroDCEProcessor(private val context: Context) {
                     inputBuffer.putFloat(b)
                 }
             }
+            inputBuffer.rewind()
 
             val outputBuffer = ByteBuffer.allocateDirect(1 * height * width * 3 * 4)
             outputBuffer.order(ByteOrder.nativeOrder())
@@ -101,9 +102,8 @@ class ZeroDCEProcessor(private val context: Context) {
         val outputBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(outputBitmap)
 
-        // Adjust contrast and brightness to lift shadows and recover low-light details natively
-        val brightness = 30f // Lift shadows/dark regions
-        val contrast = 1.2f   // Moderate contrast boost
+        val brightness = 30f
+        val contrast = 1.2f
 
         val scale = contrast
         val translate = (-0.5f * contrast + 0.5f) * 255f + brightness
