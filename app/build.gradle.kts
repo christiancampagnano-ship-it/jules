@@ -81,6 +81,10 @@ dependencies {
     // ONNX Runtime
     implementation(libs.onnxruntime.android)
 
+    // ML Kit Face Detection & Coroutines Play Services
+    implementation(libs.mlkit.face.detection)
+    implementation(libs.kotlinx.coroutines.play.services)
+
     // Coil
     implementation(libs.coil.compose)
 

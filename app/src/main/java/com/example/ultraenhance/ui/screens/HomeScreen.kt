@@ -102,12 +102,12 @@ fun HomeScreen(
                 FilterChip(
                     selected = selectedMode == EnhancementMode.FULL,
                     onClick = { viewModel.setEnhancementMode(EnhancementMode.FULL) },
-                    label = { Text("Full AI Pipeline") }
+                    label = { Text("3-Stage Ultra Pipeline") }
                 )
                 FilterChip(
                     selected = selectedMode == EnhancementMode.LOW_LIGHT,
                     onClick = { viewModel.setEnhancementMode(EnhancementMode.LOW_LIGHT) },
-                    label = { Text("Low Light Only") }
+                    label = { Text("Denoise Only") }
                 )
                 FilterChip(
                     selected = selectedMode == EnhancementMode.SUPER_RES,
@@ -136,13 +136,18 @@ fun HomeScreen(
                             verticalArrangement = Arrangement.Center,
                             modifier = Modifier.padding(24.dp)
                         ) {
-                            if (state.totalTiles > 0) {
-                                val progress = state.currentTile.toFloat() / state.totalTiles.toFloat()
+                            if (state.progressPercent > 0) {
                                 LinearProgressIndicator(
-                                    progress = { progress },
+                                    progress = { state.progressPercent / 100f },
                                     modifier = Modifier
                                         .fillMaxWidth(0.8f)
                                         .height(8.dp)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "${state.progressPercent}%",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             } else {
                                 CircularProgressIndicator()

@@ -32,6 +32,17 @@ class ImageRepository {
         }
     }
 
+    suspend fun executeUnifiedPipeline(
+        context: Context,
+        inputBitmap: Bitmap,
+        onStageProgress: (stageMessage: String, progressPercent: Int) -> Unit
+    ): Pair<Bitmap, Boolean> {
+        val pipeline = UnifiedAIPipeline(context)
+        val result = pipeline.execute(inputBitmap, onStageProgress)
+        pipeline.close()
+        return result
+    }
+
     fun processImagePipeline(
         context: Context,
         inputBitmap: Bitmap,

@@ -25,6 +25,7 @@ sealed class UiState {
     object Idle : UiState()
     data class Processing(
         val message: String = "Processing image...",
+        val progressPercent: Int = 0,
         val currentTile: Int = 0,
         val totalTiles: Int = 0
     ) : UiState()
@@ -51,9 +52,54 @@ class MainViewModel : ViewModel() {
         _selectedMode.value = mode
     }
 
-    fun processImage(context: Context, inputBitmap: Bitmap, mode: EnhancementMode = _selectedMode.value) {
+    fun executeUltraEnhance(context: Context, inputBitmap: Bitmap) {
         viewModelScope.launch {
-            _uiState.value = UiState.Processing("Initializing pipeline...")
+            _uiState.value = UiState.Processing("Initializing 3-Stage AI Pipeline...", 5)
+            try {
+                withContext(Dispatchers.Default) {
+                    val (enhancedBitmap, isFallbackUsed) = imageRepository.executeUnifiedPipeline(
+                        context = context,
+                        inputBitmap = inputBitmap
+                    ) { stageMessage, progressPercent ->
+                        _uiState.value = UiState.Processing(
+                            message = stageMessage,
+                            progressPercent = progressPercent
+                        )
+                    }
+
+                    if (isFallbackUsed) {
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(
+                                context.applicationContext,
+                                "Running in Native Fallback Mode. Add .tflite / .onnx files to assets for AI enhancement.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+
+                    _uiState.value = UiState.Success(
+                        original = inputBitmap,
+                        enhanced = enhancedBitmap,
+                        isFallback = isFallbackUsed,
+                        mode = EnhancementMode.FULL
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.value = UiState.Error(
+                    message = e.localizedMessage ?: e.message ?: "An unknown error occurred during processing."
+                )
+            }
+        }
+    }
+
+    fun processImage(context: Context, inputBitmap: Bitmap, mode: EnhancementMode = _selectedMode.value) {
+        if (mode == EnhancementMode.FULL) {
+            executeUltraEnhance(context, inputBitmap)
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value = UiState.Processing("Initializing pipeline...", 5)
             try {
                 withContext(Dispatchers.Default) {
                     val (enhancedBitmap, isFallbackUsed) = imageRepository.processImagePipeline(
@@ -61,8 +107,10 @@ class MainViewModel : ViewModel() {
                         inputBitmap = inputBitmap,
                         mode = mode
                     ) { currentTile, totalTiles ->
+                        val percent = if (totalTiles > 0) ((currentTile.toFloat() / totalTiles.toFloat()) * 100).toInt() else 50
                         _uiState.value = UiState.Processing(
                             message = "Super-resolving tile $currentTile of $totalTiles...",
+                            progressPercent = percent,
                             currentTile = currentTile,
                             totalTiles = totalTiles
                         )
