@@ -42,24 +42,24 @@ class TFLiteManager(private val context: Context) {
     }
 
     fun createInterpreter(modelBuffer: MappedByteBuffer): Interpreter {
-        val options = Interpreter.Options()
+        val interpreterOptions = Interpreter.Options()
         var gpuDelegate: GpuDelegate? = null
 
-        val compatList = CompatibilityList()
-        if (compatList.isDelegateSupportedOnThisDevice) {
-            try {
-                val delegateOptions = compatList.bestOptionsForThisDevice
-                gpuDelegate = GpuDelegate(delegateOptions)
-                options.addDelegate(gpuDelegate)
-            } catch (e: Exception) {
-                options.setNumThreads(4)
+        try {
+            val compatList = CompatibilityList()
+            val delegateOptions = if (compatList.isDelegateSupportedOnThisDevice) {
+                compatList.bestOptionsForThisDevice
+            } else {
+                GpuDelegate.Options()
             }
-        } else {
-            options.setNumThreads(4)
+            gpuDelegate = GpuDelegate(delegateOptions)
+            interpreterOptions.addDelegate(gpuDelegate)
+        } catch (e: Exception) {
+            interpreterOptions.setNumThreads(4)
         }
 
         return try {
-            Interpreter(modelBuffer, options)
+            Interpreter(modelBuffer, interpreterOptions)
         } catch (e: Exception) {
             gpuDelegate?.close()
             val fallbackOptions = Interpreter.Options().apply {
