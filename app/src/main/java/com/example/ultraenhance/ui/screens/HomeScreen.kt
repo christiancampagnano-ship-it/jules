@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import com.example.ultraenhance.data.ImageRepository
 import com.example.ultraenhance.ui.components.BeforeAfterSlider
 import com.example.ultraenhance.ui.components.SideBySideViewer
+import com.example.ultraenhance.ui.viewmodel.EnhancementMode
 import com.example.ultraenhance.ui.viewmodel.MainViewModel
 import com.example.ultraenhance.ui.viewmodel.UiState
 import kotlinx.coroutines.launch
@@ -51,6 +53,7 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
+    val selectedMode by viewModel.selectedMode.collectAsState()
     val imageRepository = remember { ImageRepository() }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -71,7 +74,7 @@ fun HomeScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("UltraEnhance ML") },
+                title = { Text("UltraEnhance AI Pipeline") },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -87,6 +90,31 @@ fun HomeScreen(
                 .padding(innerPadding),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Mode Selector Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = selectedMode == EnhancementMode.FULL,
+                    onClick = { viewModel.setEnhancementMode(EnhancementMode.FULL) },
+                    label = { Text("Full AI Pipeline") }
+                )
+                FilterChip(
+                    selected = selectedMode == EnhancementMode.LOW_LIGHT,
+                    onClick = { viewModel.setEnhancementMode(EnhancementMode.LOW_LIGHT) },
+                    label = { Text("Low Light Only") }
+                )
+                FilterChip(
+                    selected = selectedMode == EnhancementMode.SUPER_RES,
+                    onClick = { viewModel.setEnhancementMode(EnhancementMode.SUPER_RES) },
+                    label = { Text("Super Res / Zoom") }
+                )
+            }
+
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -109,7 +137,11 @@ fun HomeScreen(
                             CircularProgressIndicator()
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "Enhancing image with Zero-DCE & Fast-SRGAN...",
+                                text = when (selectedMode) {
+                                    EnhancementMode.FULL -> "Running Full AI Pipeline (Zero-DCE++ & FastSRGAN)..."
+                                    EnhancementMode.LOW_LIGHT -> "Recovering Low-Light Photo (Zero-DCE++)..."
+                                    EnhancementMode.SUPER_RES -> "Upsetting & Sharpening (FastSRGAN 4x Zoom)..."
+                                },
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }

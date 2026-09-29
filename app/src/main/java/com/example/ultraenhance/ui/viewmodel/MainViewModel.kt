@@ -15,10 +15,21 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+enum class EnhancementMode {
+    FULL,           // Low-Light Recovery + Super Resolution
+    LOW_LIGHT,      // Zero-DCE++ Low-Light Recovery only
+    SUPER_RES       // FastSRGAN Super Resolution / Zoom Enhance only
+}
+
 sealed class UiState {
     object Idle : UiState()
     object Processing : UiState()
-    data class Success(val original: Bitmap, val enhanced: Bitmap, val isFallback: Boolean = false) : UiState()
+    data class Success(
+        val original: Bitmap,
+        val enhanced: Bitmap,
+        val isFallback: Boolean = false,
+        val mode: EnhancementMode = EnhancementMode.FULL
+    ) : UiState()
     data class Error(val message: String) : UiState()
 }
 
@@ -27,21 +38,54 @@ class MainViewModel : ViewModel() {
     private val _uiState = MutableStateFlow<UiState>(UiState.Idle)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    fun processImage(context: Context, inputBitmap: Bitmap) {
+    private val _selectedMode = MutableStateFlow(EnhancementMode.FULL)
+    val selectedMode: StateFlow<EnhancementMode> = _selectedMode.asStateFlow()
+
+    fun setEnhancementMode(mode: EnhancementMode) {
+        _selectedMode.value = mode
+    }
+
+    fun processImage(context: Context, inputBitmap: Bitmap, mode: EnhancementMode = _selectedMode.value) {
         viewModelScope.launch(Dispatchers.Default) {
             _uiState.value = UiState.Processing
             try {
-                val zeroDCEProcessor = ZeroDCEProcessor(context)
-                val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
-                val stage1Output = zeroDCEProcessor.process(inputBitmap)
-                zeroDCEProcessor.close()
+                var currentBitmap = inputBitmap
+                var isFallbackUsed = false
 
-                val superResProcessor = SuperResProcessor(context)
-                val isSuperResAvailable = superResProcessor.isModelAvailable()
-                val stage2Output = superResProcessor.process(stage1Output)
-                superResProcessor.close()
+                when (mode) {
+                    EnhancementMode.FULL -> {
+                        val zeroDCEProcessor = ZeroDCEProcessor(context)
+                        val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
+                        val stage1Output = zeroDCEProcessor.process(currentBitmap)
+                        zeroDCEProcessor.close()
 
-                val isFallbackUsed = !isZeroDCEAvailable || !isSuperResAvailable
+                        val superResProcessor = SuperResProcessor(context)
+                        val isSuperResAvailable = superResProcessor.isModelAvailable()
+                        val stage2Output = superResProcessor.process(stage1Output)
+                        superResProcessor.close()
+
+                        currentBitmap = stage2Output
+                        isFallbackUsed = !isZeroDCEAvailable || !isSuperResAvailable
+                    }
+                    EnhancementMode.LOW_LIGHT -> {
+                        val zeroDCEProcessor = ZeroDCEProcessor(context)
+                        val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
+                        val stage1Output = zeroDCEProcessor.process(currentBitmap)
+                        zeroDCEProcessor.close()
+
+                        currentBitmap = stage1Output
+                        isFallbackUsed = !isZeroDCEAvailable
+                    }
+                    EnhancementMode.SUPER_RES -> {
+                        val superResProcessor = SuperResProcessor(context)
+                        val isSuperResAvailable = superResProcessor.isModelAvailable()
+                        val stage2Output = superResProcessor.process(currentBitmap)
+                        superResProcessor.close()
+
+                        currentBitmap = stage2Output
+                        isFallbackUsed = !isSuperResAvailable
+                    }
+                }
 
                 if (isFallbackUsed) {
                     Handler(Looper.getMainLooper()).post {
@@ -55,8 +99,9 @@ class MainViewModel : ViewModel() {
 
                 _uiState.value = UiState.Success(
                     original = inputBitmap,
-                    enhanced = stage2Output,
-                    isFallback = isFallbackUsed
+                    enhanced = currentBitmap,
+                    isFallback = isFallbackUsed,
+                    mode = mode
                 )
             } catch (e: Exception) {
                 _uiState.value = UiState.Error(
