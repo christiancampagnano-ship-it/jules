@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.example.ultraenhance.ui.viewmodel.EnhancementMode
 import java.io.OutputStream
 
 class ImageRepository {
@@ -21,7 +22,6 @@ class ImageRepository {
                     decoder.isMutableRequired = true
                 }
             } else {
-                @Suppress("DEPRECATION")
                 context.contentResolver.openInputStream(uri)?.use { inputStream ->
                     BitmapFactory.decodeStream(inputStream)
                 }
@@ -30,6 +30,58 @@ class ImageRepository {
             e.printStackTrace()
             null
         }
+    }
+
+    fun processImagePipeline(
+        context: Context,
+        inputBitmap: Bitmap,
+        mode: EnhancementMode,
+        onProgress: (currentTile: Int, totalTiles: Int) -> Unit
+    ): Pair<Bitmap, Boolean> {
+        var currentBitmap = inputBitmap
+        var isFallbackUsed = false
+
+        try {
+            when (mode) {
+                EnhancementMode.FULL -> {
+                    val zeroDCEProcessor = ZeroDCEProcessor(context)
+                    val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
+                    val stage1Output = zeroDCEProcessor.process(currentBitmap)
+                    zeroDCEProcessor.close()
+
+                    val superResProcessor = SuperResProcessor(context)
+                    val isSuperResAvailable = superResProcessor.isModelAvailable()
+                    val stage2Output = superResProcessor.process(stage1Output, onProgress)
+                    superResProcessor.close()
+
+                    currentBitmap = stage2Output
+                    isFallbackUsed = !isZeroDCEAvailable || !isSuperResAvailable
+                }
+                EnhancementMode.LOW_LIGHT -> {
+                    val zeroDCEProcessor = ZeroDCEProcessor(context)
+                    val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
+                    val stage1Output = zeroDCEProcessor.process(currentBitmap)
+                    zeroDCEProcessor.close()
+
+                    currentBitmap = stage1Output
+                    isFallbackUsed = !isZeroDCEAvailable
+                }
+                EnhancementMode.SUPER_RES -> {
+                    val superResProcessor = SuperResProcessor(context)
+                    val isSuperResAvailable = superResProcessor.isModelAvailable()
+                    val stage2Output = superResProcessor.process(currentBitmap, onProgress)
+                    superResProcessor.close()
+
+                    currentBitmap = stage2Output
+                    isFallbackUsed = !isSuperResAvailable
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            isFallbackUsed = true
+        }
+
+        return Pair(currentBitmap, isFallbackUsed)
     }
 
     fun saveImageToGallery(context: Context, bitmap: Bitmap): Uri? {

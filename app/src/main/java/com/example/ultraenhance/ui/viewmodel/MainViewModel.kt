@@ -7,8 +7,7 @@ import android.os.Looper
 import android.widget.Toast
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.ultraenhance.data.SuperResProcessor
-import com.example.ultraenhance.data.ZeroDCEProcessor
+import com.example.ultraenhance.data.ImageRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -40,6 +39,8 @@ sealed class UiState {
 
 class MainViewModel : ViewModel() {
 
+    private val imageRepository = ImageRepository()
+
     private val _uiState = MutableStateFlow<UiState>(UiState.Idle)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
@@ -55,65 +56,23 @@ class MainViewModel : ViewModel() {
             _uiState.value = UiState.Processing("Initializing pipeline...")
             try {
                 withContext(Dispatchers.Default) {
-                    var currentBitmap = inputBitmap
-                    var isFallbackUsed = false
-
-                    when (mode) {
-                        EnhancementMode.FULL -> {
-                            _uiState.value = UiState.Processing("Applying Stage 1: Zero-DCE++ Low-Light Recovery...")
-                            val zeroDCEProcessor = ZeroDCEProcessor(context)
-                            val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
-                            val stage1Output = zeroDCEProcessor.process(currentBitmap)
-                            zeroDCEProcessor.close()
-
-                            _uiState.value = UiState.Processing("Applying Stage 2: Tiled FastSRGAN Super Resolution...")
-                            val superResProcessor = SuperResProcessor(context)
-                            val isSuperResAvailable = superResProcessor.isModelAvailable()
-                            val stage2Output = superResProcessor.process(stage1Output) { currentTile, totalTiles ->
-                                _uiState.value = UiState.Processing(
-                                    message = "Super-resolving tile $currentTile of $totalTiles...",
-                                    currentTile = currentTile,
-                                    totalTiles = totalTiles
-                                )
-                            }
-                            superResProcessor.close()
-
-                            currentBitmap = stage2Output
-                            isFallbackUsed = !isZeroDCEAvailable || !isSuperResAvailable
-                        }
-                        EnhancementMode.LOW_LIGHT -> {
-                            _uiState.value = UiState.Processing("Applying Zero-DCE++ Low-Light Recovery...")
-                            val zeroDCEProcessor = ZeroDCEProcessor(context)
-                            val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
-                            val stage1Output = zeroDCEProcessor.process(currentBitmap)
-                            zeroDCEProcessor.close()
-
-                            currentBitmap = stage1Output
-                            isFallbackUsed = !isZeroDCEAvailable
-                        }
-                        EnhancementMode.SUPER_RES -> {
-                            _uiState.value = UiState.Processing("Applying Tiled FastSRGAN Super Resolution...")
-                            val superResProcessor = SuperResProcessor(context)
-                            val isSuperResAvailable = superResProcessor.isModelAvailable()
-                            val stage2Output = superResProcessor.process(currentBitmap) { currentTile, totalTiles ->
-                                _uiState.value = UiState.Processing(
-                                    message = "Super-resolving tile $currentTile of $totalTiles...",
-                                    currentTile = currentTile,
-                                    totalTiles = totalTiles
-                                )
-                            }
-                            superResProcessor.close()
-
-                            currentBitmap = stage2Output
-                            isFallbackUsed = !isSuperResAvailable
-                        }
+                    val (enhancedBitmap, isFallbackUsed) = imageRepository.processImagePipeline(
+                        context = context,
+                        inputBitmap = inputBitmap,
+                        mode = mode
+                    ) { currentTile, totalTiles ->
+                        _uiState.value = UiState.Processing(
+                            message = "Super-resolving tile $currentTile of $totalTiles...",
+                            currentTile = currentTile,
+                            totalTiles = totalTiles
+                        )
                     }
 
                     if (isFallbackUsed) {
                         Handler(Looper.getMainLooper()).post {
                             Toast.makeText(
                                 context.applicationContext,
-                                "Running in Native Fallback Mode. Add .tflite files to assets for AI enhancement.",
+                                "Running in Native Fallback Mode. Add .tflite / .onnx files to assets for AI enhancement.",
                                 Toast.LENGTH_LONG
                             ).show()
                         }
@@ -121,7 +80,7 @@ class MainViewModel : ViewModel() {
 
                     _uiState.value = UiState.Success(
                         original = inputBitmap,
-                        enhanced = currentBitmap,
+                        enhanced = enhancedBitmap,
                         isFallback = isFallbackUsed,
                         mode = mode
                     )
