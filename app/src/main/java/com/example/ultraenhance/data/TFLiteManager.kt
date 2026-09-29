@@ -3,6 +3,7 @@ package com.example.ultraenhance.data
 import android.content.Context
 import android.content.res.AssetFileDescriptor
 import org.tensorflow.lite.Interpreter
+import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
 import java.io.FileInputStream
 import java.io.FileNotFoundException
@@ -44,10 +45,16 @@ class TFLiteManager(private val context: Context) {
         val options = Interpreter.Options()
         var gpuDelegate: GpuDelegate? = null
 
-        try {
-            gpuDelegate = GpuDelegate()
-            options.addDelegate(gpuDelegate)
-        } catch (e: Exception) {
+        val compatList = CompatibilityList()
+        if (compatList.isDelegateSupportedOnThisDevice) {
+            try {
+                val delegateOptions = compatList.bestOptionsForThisDevice
+                gpuDelegate = GpuDelegate(delegateOptions)
+                options.addDelegate(gpuDelegate)
+            } catch (e: Exception) {
+                options.setNumThreads(4)
+            }
+        } else {
             options.setNumThreads(4)
         }
 

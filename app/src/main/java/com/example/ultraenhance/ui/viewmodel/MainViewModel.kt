@@ -47,7 +47,7 @@ class MainViewModel : ViewModel() {
                     Handler(Looper.getMainLooper()).post {
                         Toast.makeText(
                             context.applicationContext,
-                            "Running in Native Fallback mode. Add .tflite models to assets for AI mode.",
+                            "Running in Native Fallback Mode. Add .tflite files to assets for AI enhancement.",
                             Toast.LENGTH_LONG
                         ).show()
                     }
