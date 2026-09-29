@@ -3,8 +3,6 @@ package com.example.ultraenhance.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
@@ -20,7 +18,8 @@ class SuperResProcessor(private val context: Context) {
     companion object {
         const val MODEL_FILE = "fast_srgan.tflite"
         const val SCALE_FACTOR = 4
-        const val TILE_SIZE = 256
+        const val TILE_SIZE = 512
+        const val OVERLAP = 16
     }
 
     fun isModelAvailable(): Boolean {
@@ -35,7 +34,10 @@ class SuperResProcessor(private val context: Context) {
         return interpreter
     }
 
-    fun process(inputBitmap: Bitmap): Bitmap {
+    fun process(
+        inputBitmap: Bitmap,
+        onProgress: ((currentTile: Int, totalTiles: Int) -> Unit)? = null
+    ): Bitmap {
         val interp = getInterpreter() ?: return applyNativeFallback(inputBitmap)
 
         return try {
@@ -53,22 +55,65 @@ class SuperResProcessor(private val context: Context) {
                 isFilterBitmap = true
             }
 
-            // Process image in tiles to maintain full pixel density without downscaling
-            for (y in 0 until inHeight step TILE_SIZE) {
-                for (x in 0 until inWidth step TILE_SIZE) {
-                    val tileW = Math.min(TILE_SIZE, inWidth - x)
-                    val tileH = Math.min(TILE_SIZE, inHeight - y)
+            // Calculate grid tiles with 16px overlap
+            val step = TILE_SIZE - (OVERLAP * 2)
 
-                    val tileBitmap = Bitmap.createBitmap(inputBitmap, x, y, tileW, tileH)
+            val xTiles = Math.ceil(inWidth.toDouble() / step).toInt()
+            val yTiles = Math.ceil(inHeight.toDouble() / step).toInt()
+            val totalTiles = xTiles * yTiles
+
+            var tileCount = 0
+
+            for (ty in 0 until yTiles) {
+                for (tx in 0 until xTiles) {
+                    tileCount++
+                    onProgress?.invoke(tileCount, totalTiles)
+
+                    val startX = (tx * step).coerceIn(0, inWidth - 1)
+                    val startY = (ty * step).coerceIn(0, inHeight - 1)
+
+                    val endX = (startX + TILE_SIZE).coerceAtMost(inWidth)
+                    val endY = (startY + TILE_SIZE).coerceAtMost(inHeight)
+
+                    val tileW = endX - startX
+                    val tileH = endY - startY
+
+                    if (tileW <= 0 || tileH <= 0) continue
+
+                    val tileBitmap = Bitmap.createBitmap(inputBitmap, startX, startY, tileW, tileH)
                     val processedTile = processTile(interp, tileBitmap)
+                    tileBitmap.recycle()
 
-                    val dstRect = Rect(
-                        x * SCALE_FACTOR,
-                        y * SCALE_FACTOR,
-                        (x + tileW) * SCALE_FACTOR,
-                        (y + tileH) * SCALE_FACTOR
-                    )
-                    canvas.drawBitmap(processedTile, null, dstRect, paint)
+                    // Crop out the overlap regions from the processed tile output to eliminate seam lines
+                    val cropLeft = if (startX > 0) OVERLAP * SCALE_FACTOR else 0
+                    val cropTop = if (startY > 0) OVERLAP * SCALE_FACTOR else 0
+                    val cropRight = if (endX < inWidth) OVERLAP * SCALE_FACTOR else 0
+                    val cropBottom = if (endY < inHeight) OVERLAP * SCALE_FACTOR else 0
+
+                    val validTileW = processedTile.width - cropLeft - cropRight
+                    val validTileH = processedTile.height - cropTop - cropBottom
+
+                    if (validTileW > 0 && validTileH > 0) {
+                        val srcRect = Rect(
+                            cropLeft,
+                            cropTop,
+                            cropLeft + validTileW,
+                            cropTop + validTileH
+                        )
+
+                        val dstLeft = (startX * SCALE_FACTOR) + cropLeft
+                        val dstTop = (startY * SCALE_FACTOR) + cropTop
+                        val dstRect = Rect(
+                            dstLeft,
+                            dstTop,
+                            dstLeft + validTileW,
+                            dstTop + validTileH
+                        )
+
+                        canvas.drawBitmap(processedTile, srcRect, dstRect, paint)
+                    }
+
+                    processedTile.recycle()
                 }
             }
 
@@ -148,10 +193,6 @@ class SuperResProcessor(private val context: Context) {
 
         val resultPixels = pixels.clone()
 
-        // Laplacian 3x3 sharpening kernel
-        // [  0, -1,  0 ]
-        // [ -1,  5, -1 ]
-        // [  0, -1,  0 ]
         for (y in 1 until height - 1) {
             for (x in 1 until width - 1) {
                 val idx = y * width + x

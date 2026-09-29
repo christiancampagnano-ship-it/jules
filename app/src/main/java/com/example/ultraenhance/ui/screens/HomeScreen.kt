@@ -18,6 +18,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -132,16 +133,23 @@ fun HomeScreen(
                     is UiState.Processing -> {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(24.dp)
                         ) {
-                            CircularProgressIndicator()
+                            if (state.totalTiles > 0) {
+                                val progress = state.currentTile.toFloat() / state.totalTiles.toFloat()
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.8f)
+                                        .height(8.dp)
+                                )
+                            } else {
+                                CircularProgressIndicator()
+                            }
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = when (selectedMode) {
-                                    EnhancementMode.FULL -> "Running Full AI Pipeline (Zero-DCE++ & FastSRGAN)..."
-                                    EnhancementMode.LOW_LIGHT -> "Recovering Low-Light Photo (Zero-DCE++)..."
-                                    EnhancementMode.SUPER_RES -> "Upsetting & Sharpening (FastSRGAN 4x Zoom)..."
-                                },
+                                text = state.message,
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }

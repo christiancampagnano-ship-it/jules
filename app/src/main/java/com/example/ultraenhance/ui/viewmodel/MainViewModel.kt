@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 enum class EnhancementMode {
     FULL,           // Low-Light Recovery + Super Resolution
@@ -23,7 +24,11 @@ enum class EnhancementMode {
 
 sealed class UiState {
     object Idle : UiState()
-    object Processing : UiState()
+    data class Processing(
+        val message: String = "Processing image...",
+        val currentTile: Int = 0,
+        val totalTiles: Int = 0
+    ) : UiState()
     data class Success(
         val original: Bitmap,
         val enhanced: Bitmap,
@@ -46,63 +51,81 @@ class MainViewModel : ViewModel() {
     }
 
     fun processImage(context: Context, inputBitmap: Bitmap, mode: EnhancementMode = _selectedMode.value) {
-        viewModelScope.launch(Dispatchers.Default) {
-            _uiState.value = UiState.Processing
+        viewModelScope.launch {
+            _uiState.value = UiState.Processing("Initializing pipeline...")
             try {
-                var currentBitmap = inputBitmap
-                var isFallbackUsed = false
+                withContext(Dispatchers.Default) {
+                    var currentBitmap = inputBitmap
+                    var isFallbackUsed = false
 
-                when (mode) {
-                    EnhancementMode.FULL -> {
-                        val zeroDCEProcessor = ZeroDCEProcessor(context)
-                        val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
-                        val stage1Output = zeroDCEProcessor.process(currentBitmap)
-                        zeroDCEProcessor.close()
+                    when (mode) {
+                        EnhancementMode.FULL -> {
+                            _uiState.value = UiState.Processing("Applying Stage 1: Zero-DCE++ Low-Light Recovery...")
+                            val zeroDCEProcessor = ZeroDCEProcessor(context)
+                            val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
+                            val stage1Output = zeroDCEProcessor.process(currentBitmap)
+                            zeroDCEProcessor.close()
 
-                        val superResProcessor = SuperResProcessor(context)
-                        val isSuperResAvailable = superResProcessor.isModelAvailable()
-                        val stage2Output = superResProcessor.process(stage1Output)
-                        superResProcessor.close()
+                            _uiState.value = UiState.Processing("Applying Stage 2: Tiled FastSRGAN Super Resolution...")
+                            val superResProcessor = SuperResProcessor(context)
+                            val isSuperResAvailable = superResProcessor.isModelAvailable()
+                            val stage2Output = superResProcessor.process(stage1Output) { currentTile, totalTiles ->
+                                _uiState.value = UiState.Processing(
+                                    message = "Super-resolving tile $currentTile of $totalTiles...",
+                                    currentTile = currentTile,
+                                    totalTiles = totalTiles
+                                )
+                            }
+                            superResProcessor.close()
 
-                        currentBitmap = stage2Output
-                        isFallbackUsed = !isZeroDCEAvailable || !isSuperResAvailable
+                            currentBitmap = stage2Output
+                            isFallbackUsed = !isZeroDCEAvailable || !isSuperResAvailable
+                        }
+                        EnhancementMode.LOW_LIGHT -> {
+                            _uiState.value = UiState.Processing("Applying Zero-DCE++ Low-Light Recovery...")
+                            val zeroDCEProcessor = ZeroDCEProcessor(context)
+                            val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
+                            val stage1Output = zeroDCEProcessor.process(currentBitmap)
+                            zeroDCEProcessor.close()
+
+                            currentBitmap = stage1Output
+                            isFallbackUsed = !isZeroDCEAvailable
+                        }
+                        EnhancementMode.SUPER_RES -> {
+                            _uiState.value = UiState.Processing("Applying Tiled FastSRGAN Super Resolution...")
+                            val superResProcessor = SuperResProcessor(context)
+                            val isSuperResAvailable = superResProcessor.isModelAvailable()
+                            val stage2Output = superResProcessor.process(currentBitmap) { currentTile, totalTiles ->
+                                _uiState.value = UiState.Processing(
+                                    message = "Super-resolving tile $currentTile of $totalTiles...",
+                                    currentTile = currentTile,
+                                    totalTiles = totalTiles
+                                )
+                            }
+                            superResProcessor.close()
+
+                            currentBitmap = stage2Output
+                            isFallbackUsed = !isSuperResAvailable
+                        }
                     }
-                    EnhancementMode.LOW_LIGHT -> {
-                        val zeroDCEProcessor = ZeroDCEProcessor(context)
-                        val isZeroDCEAvailable = zeroDCEProcessor.isModelAvailable()
-                        val stage1Output = zeroDCEProcessor.process(currentBitmap)
-                        zeroDCEProcessor.close()
 
-                        currentBitmap = stage1Output
-                        isFallbackUsed = !isZeroDCEAvailable
+                    if (isFallbackUsed) {
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(
+                                context.applicationContext,
+                                "Running in Native Fallback Mode. Add .tflite files to assets for AI enhancement.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
-                    EnhancementMode.SUPER_RES -> {
-                        val superResProcessor = SuperResProcessor(context)
-                        val isSuperResAvailable = superResProcessor.isModelAvailable()
-                        val stage2Output = superResProcessor.process(currentBitmap)
-                        superResProcessor.close()
 
-                        currentBitmap = stage2Output
-                        isFallbackUsed = !isSuperResAvailable
-                    }
+                    _uiState.value = UiState.Success(
+                        original = inputBitmap,
+                        enhanced = currentBitmap,
+                        isFallback = isFallbackUsed,
+                        mode = mode
+                    )
                 }
-
-                if (isFallbackUsed) {
-                    Handler(Looper.getMainLooper()).post {
-                        Toast.makeText(
-                            context.applicationContext,
-                            "Running in Native Fallback Mode. Add .tflite files to assets for AI enhancement.",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                }
-
-                _uiState.value = UiState.Success(
-                    original = inputBitmap,
-                    enhanced = currentBitmap,
-                    isFallback = isFallbackUsed,
-                    mode = mode
-                )
             } catch (e: Exception) {
                 _uiState.value = UiState.Error(
                     message = e.localizedMessage ?: e.message ?: "An unknown error occurred during processing."
