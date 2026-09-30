@@ -56,8 +56,8 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.value = UiState.Processing("Initializing 3-Stage AI Pipeline...", 5)
             try {
-                withContext(Dispatchers.Default) {
-                    val (enhancedBitmap, isFallbackUsed) = imageRepository.executeUnifiedPipeline(
+                val (enhancedBitmap, isFallbackUsed) = withContext(Dispatchers.Default) {
+                    imageRepository.executeUnifiedPipeline(
                         context = context,
                         inputBitmap = inputBitmap
                     ) { stageMessage, progressPercent ->
@@ -66,17 +66,19 @@ class MainViewModel : ViewModel() {
                             progressPercent = progressPercent
                         )
                     }
+                }
 
-                    if (isFallbackUsed) {
-                        Handler(Looper.getMainLooper()).post {
-                            Toast.makeText(
-                                context.applicationContext,
-                                "Running in Native Fallback Mode. Add .tflite / .onnx files to assets for AI enhancement.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
+                if (isFallbackUsed) {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(
+                            context.applicationContext,
+                            "Running in Native Fallback Mode. Add .tflite / .onnx files to assets for AI enhancement.",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
+                }
 
+                withContext(Dispatchers.Main) {
                     _uiState.value = UiState.Success(
                         original = inputBitmap,
                         enhanced = enhancedBitmap,
@@ -85,9 +87,11 @@ class MainViewModel : ViewModel() {
                     )
                 }
             } catch (e: Exception) {
-                _uiState.value = UiState.Error(
-                    message = e.localizedMessage ?: e.message ?: "An unknown error occurred during processing."
-                )
+                withContext(Dispatchers.Main) {
+                    _uiState.value = UiState.Error(
+                        message = e.localizedMessage ?: e.message ?: "An unknown error occurred during processing."
+                    )
+                }
             }
         }
     }
@@ -101,8 +105,8 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.value = UiState.Processing("Initializing pipeline...", 5)
             try {
-                withContext(Dispatchers.Default) {
-                    val (enhancedBitmap, isFallbackUsed) = imageRepository.processImagePipeline(
+                val (enhancedBitmap, isFallbackUsed) = withContext(Dispatchers.Default) {
+                    imageRepository.processImagePipeline(
                         context = context,
                         inputBitmap = inputBitmap,
                         mode = mode
@@ -115,17 +119,19 @@ class MainViewModel : ViewModel() {
                             totalTiles = totalTiles
                         )
                     }
+                }
 
-                    if (isFallbackUsed) {
-                        Handler(Looper.getMainLooper()).post {
-                            Toast.makeText(
-                                context.applicationContext,
-                                "Running in Native Fallback Mode. Add .tflite / .onnx files to assets for AI enhancement.",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
+                if (isFallbackUsed) {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(
+                            context.applicationContext,
+                            "Running in Native Fallback Mode. Add .tflite / .onnx files to assets for AI enhancement.",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
+                }
 
+                withContext(Dispatchers.Main) {
                     _uiState.value = UiState.Success(
                         original = inputBitmap,
                         enhanced = enhancedBitmap,
@@ -134,9 +140,11 @@ class MainViewModel : ViewModel() {
                     )
                 }
             } catch (e: Exception) {
-                _uiState.value = UiState.Error(
-                    message = e.localizedMessage ?: e.message ?: "An unknown error occurred during processing."
-                )
+                withContext(Dispatchers.Main) {
+                    _uiState.value = UiState.Error(
+                        message = e.localizedMessage ?: e.message ?: "An unknown error occurred during processing."
+                    )
+                }
             }
         }
     }

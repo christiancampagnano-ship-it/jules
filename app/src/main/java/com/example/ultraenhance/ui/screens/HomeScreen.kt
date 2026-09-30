@@ -163,8 +163,8 @@ fun HomeScreen(
                         val isCompact = windowSizeClass.widthSizeClass == WindowWidthSizeClass.Compact
                         if (isCompact) {
                             BeforeAfterSlider(
-                                original = state.original,
-                                enhanced = state.enhanced,
+                                originalBitmap = state.original,
+                                enhancedBitmap = state.enhanced,
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
