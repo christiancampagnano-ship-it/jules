@@ -2,6 +2,7 @@ package com.example.ultraenhance.data
 
 import android.content.Context
 import android.content.res.AssetFileDescriptor
+import android.util.Log
 import org.tensorflow.lite.Interpreter
 import org.tensorflow.lite.gpu.CompatibilityList
 import org.tensorflow.lite.gpu.GpuDelegate
@@ -13,11 +14,16 @@ import java.nio.channels.FileChannel
 
 class TFLiteManager(private val context: Context) {
 
+    companion object {
+        private const val TAG = "UltraEnhance"
+    }
+
     fun isModelAvailable(modelName: String): Boolean {
         return try {
             val fileDescriptor = context.assets.openFd(modelName)
+            val length = fileDescriptor.length
             fileDescriptor.close()
-            true
+            length > 0
         } catch (e: Exception) {
             false
         }
@@ -34,6 +40,7 @@ class TFLiteManager(private val context: Context) {
             fileDescriptor.close()
             buffer
         } catch (e: IOException) {
+            Log.e(TAG, "Model file '$modelName' not found or failed to load from assets.", e)
             throw FileNotFoundException(
                 "Model file '$modelName' not found in assets. " +
                         "Please place '$modelName' inside 'app/src/main/assets/'."
@@ -44,23 +51,31 @@ class TFLiteManager(private val context: Context) {
     fun createInterpreter(modelBuffer: MappedByteBuffer): Interpreter {
         val interpreterOptions = Interpreter.Options()
         var gpuDelegate: GpuDelegate? = null
+        var activeDelegate = "CPU (4 threads)"
 
         try {
             val compatList = CompatibilityList()
-            val delegateOptions = if (compatList.isDelegateSupportedOnThisDevice) {
-                compatList.bestOptionsForThisDevice
+            if (compatList.isDelegateSupportedOnThisDevice) {
+                val delegateOptions = compatList.bestOptionsForThisDevice
+                gpuDelegate = GpuDelegate(delegateOptions)
+                interpreterOptions.addDelegate(gpuDelegate)
+                activeDelegate = "GpuDelegate"
+                Log.i(TAG, "Active TFLite Delegate: GpuDelegate initialized successfully.")
             } else {
-                GpuDelegate.Options()
+                interpreterOptions.setNumThreads(4)
+                Log.i(TAG, "GpuDelegate not supported on device; using 4 CPU threads.")
             }
-            gpuDelegate = GpuDelegate(delegateOptions)
-            interpreterOptions.addDelegate(gpuDelegate)
         } catch (e: Exception) {
+            Log.e(TAG, "Error initializing GpuDelegate, falling back to CPU", e)
             interpreterOptions.setNumThreads(4)
         }
 
         return try {
-            Interpreter(modelBuffer, interpreterOptions)
+            val interpreter = Interpreter(modelBuffer, interpreterOptions)
+            Log.i(TAG, "Interpreter created successfully with $activeDelegate")
+            interpreter
         } catch (e: Exception) {
+            Log.e(TAG, "Failed creating Interpreter with $activeDelegate, trying CPU fallback", e)
             gpuDelegate?.close()
             val fallbackOptions = Interpreter.Options().apply {
                 setNumThreads(4)
