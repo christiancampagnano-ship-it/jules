@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Ubuntu Mic & Audio Fixer
+Comment=Fix microphone permissions, Bluetooth calls, and PipeWire audio stack
+Exec=ubuntu-mic-fixer
+Icon=ubuntu-mic-fixer
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Utility;Settings;
+Keywords=microphone;audio;pipewire;bluetooth;alsa;snap;
+StartupNotify=true
